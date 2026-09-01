@@ -62,5 +62,38 @@ namespace Blaze.Components.Authentication
                 }
             };
         }
+
+        // [skate3-360] Xbox 360 session details from gamertag + XUID (no PS3 ticket).
+        public static SessionDetails CreateNewSessionDetails(string displayName, ulong xuid, uint blazeId)
+        {
+            string token = GenerateToken();
+
+            string usernamesPath = Path.Combine(ServerGlobals.BaseDirectory, "spoofed_usernames.json");
+            if (File.Exists(usernamesPath))
+            {
+                string usernamesJson = File.ReadAllText(usernamesPath);
+                var nameSpoofs = JsonConvert.DeserializeObject<Dictionary<string, string>>(usernamesJson);
+                if (nameSpoofs != null && nameSpoofs.ContainsKey(displayName))
+                    displayName = nameSpoofs[displayName];
+            }
+
+            return new SessionDetails
+            {
+                BlazeId = blazeId,
+                IsFirstLogin = false,
+                BlazeToken = token,
+                LastLoginTime = 0,
+                Email = "nobody@nobody.com",
+                UserId = blazeId,
+                PersonaDetails =
+                {
+                    DisplayName = displayName,
+                    LastLoginTime = 0,
+                    PersonaId = blazeId,
+                    ExternalRef = xuid,
+                    ExternalRefType = 0x1 // Xbox (PS3 uses 0x2)
+                }
+            };
+        }
     }
 }

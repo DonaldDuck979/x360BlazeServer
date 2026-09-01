@@ -19,6 +19,9 @@ namespace Blaze
                 case AuthenticationMessage.ps3Login:
                     await Ps3LoginHandler.HandleRequest(user, receivedPacket);
                     break;
+                case AuthenticationMessage.xboxLogin:
+                    await XboxLoginHandler.HandleRequest(user, receivedPacket);
+                    break;
                 case AuthenticationMessage.createWalUserSession:
                     await CreateWalUserSessionHandler.HandleRequest(user, receivedPacket);
                     break;

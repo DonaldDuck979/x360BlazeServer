@@ -1,3 +1,10 @@
 bin/
 obj/
 Properties/PublishProfiles
+# Runtime data (do not commit)
+*.db
+*.db-shm
+*.db-wal
+logs/
+logs.txt
+spoofed_usernames.json
