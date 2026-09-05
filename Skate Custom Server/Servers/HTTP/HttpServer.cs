@@ -175,6 +175,18 @@ namespace Servers.HTTP
                                 break;
                         }
 
+                        // The custom endpoints above fully own their response.
+                        // Return here so we don't fall through to the ASMX /
+                        // static-file handlers below, which would double-handle the
+                        // same response and corrupt it ("Bytes to be written exceed
+                        // the Content-Length" / setting status after send).
+                        if (path is "/sendchat" or "/serverstats" or "/spoofusername"
+                                or "/removespoof" or "/spoofingpanel" or "/uploadtexture")
+                        {
+                            try { res.Close(); } catch { }
+                            return;
+                        }
+
                         // ASMX Endpoint routing
                         if (path.StartsWith("/skate3/ws/SkateReel.asmx") || path.StartsWith("/skate3/ws/SkateProfile.asmx"))
                         {
@@ -285,10 +297,22 @@ namespace Servers.HTTP
 
                         res.Close();
                     }
+                    catch (Exception ex) when (ex is HttpListenerException
+                            || ex is System.IO.IOException
+                            || ex is ObjectDisposedException
+                            || ex is OperationCanceledException
+                            || ex is System.Net.ProtocolViolationException)
+                    {
+                        // Client disconnected mid-response, or the response was
+                        // already committed. Benign under real traffic — abort
+                        // quietly instead of logging full stack traces, which used
+                        // to pile up and degrade the long-running server.
+                        try { ctx.Response.Abort(); } catch { }
+                    }
                     catch (Exception ex)
                     {
-                        ServerLogger.Log($"HTTP request error: {ex}");
-                        try { ctx.Response.StatusCode = 500; ctx.Response.Close(); } catch { }
+                        ServerLogger.Log($"HTTP request error: {ex.Message}");
+                        try { ctx.Response.Abort(); } catch { }
                     }
                 });
             }
