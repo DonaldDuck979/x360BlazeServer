@@ -1,4 +1,4 @@
-﻿using Blaze.Components.Gamemanager.Commands;
+using Blaze.Components.Gamemanager.Commands;
 using Blaze.Components.Gamemanager.Models;
 using Servers;
 using Blaze.GamemanagerComponent;
@@ -33,6 +33,19 @@ namespace Blaze.Components.Gamemanager.Handlers
             "skatepark_owner_id"
         };
 
+        // Staggered free-skate create window: simultaneous quick-match players all
+        // send createGame at once (both see zero games and would each make their
+        // own). We give each free-skate creator a DIFFERENT wait so they serialize
+        // — the 1st (index 0) proceeds immediately and creates the one shared game,
+        // each later one waits index*step and, by the time it wakes, converges into
+        // that shared game instead of making a second. The window resets after a
+        // quiet gap so a genuinely-separate later session still creates its own.
+        private static readonly object _fsCreateLock = new object();
+        private static int _fsCreateIndex = 0;
+        private static long _lastFsCreateMs = 0;
+        private const int FsStaggerStepMs = 2500;
+        private const int FsWindowResetMs = 8000;
+
         public static async Task HandleRequest(User creator, byte[] packetBytes)
         {
             // Make sure player doesn't have a lobby running already
@@ -40,6 +53,55 @@ namespace Blaze.Components.Gamemanager.Handlers
             {
                 await ServerUtils.SendError(creator, packetBytes, ServerUtils.ErrorCode.GAMEMANAGER_ERR_PERMISSION_DENIED);
                 return;
+            }
+
+            // [free-skate converge] Force every free-skate player into ONE shared
+            // game so the whole lobby plays together. The stock flow makes each
+            // quick-match player create its OWN game (matchmaking race: both see
+            // zero games, both create; challenge_key in the match filter keeps
+            // them apart even sequentially). Here: if this createGame is free-skate
+            // and a joinable free-skate game already exists, JOIN it instead of
+            // making a second one. Also catches a late joiner whose matchmake
+            // skipped the now-IN_GAME shared game and fell through to createGame.
+            {
+                var peek = BlazeMessage.CreateModelFromRequest<CreateGameRequest>(packetBytes);
+                bool isFreeSkate = peek.GameAttributes.TryGetValue("is_free_skate", out var fsVal)
+                    && fsVal != "0" && fsVal != "false" && !string.IsNullOrEmpty(fsVal);
+                if (isFreeSkate)
+                {
+                    // Staggered wait: P1 index 0 -> no wait, P2 -> one
+                    // step, P3 -> two steps, ... so concurrent creators wake in order
+                    // and later ones find the shared game the earlier one made.
+                    int myIndex;
+                    lock (_fsCreateLock)
+                    {
+                        long now = Environment.TickCount64;
+                        if (now - _lastFsCreateMs > FsWindowResetMs) _fsCreateIndex = 0;
+                        myIndex = _fsCreateIndex++;
+                        _lastFsCreateMs = now;
+                    }
+                    if (myIndex > 0)
+                    {
+                        ServerLogger.Log($"[gm-trace] createGame FREE-SKATE STAGGER: {creator.UserIdentification.Name} index={myIndex} waiting {myIndex * FsStaggerStepMs}ms before converge");
+                        await Task.Delay(myIndex * FsStaggerStepMs);
+                    }
+
+                    Game shared = ServerGlobals.Games.Values.FirstOrDefault(g =>
+                        g.GameData.GameAttributes.TryGetValue("is_free_skate", out var v) && v == fsVal
+                        && g.Players.Count < 6
+                        && (g.GameData.GameState == (int)GameState.INITIALIZING
+                            || g.GameData.GameState == (int)GameState.PRE_GAME
+                            || g.GameData.GameState == (int)GameState.IN_GAME));
+                    if (shared != null)
+                    {
+                        ServerLogger.Log($"[gm-trace] createGame FREE-SKATE CONVERGE: {creator.UserIdentification.Name} -> join existing g{shared.GameData.GameId} (state={(GameState)shared.GameData.GameState}, players={shared.Players.Count}) instead of new game");
+                        var joinResp = BlazeMessage.CreateResponseFromModel(packetBytes, new JoinGameResponse { GameId = shared.GameData.GameId });
+                        await creator.Stream.WriteAsync(joinResp.Serialize());
+                        creator.IsMatchmaking = true;
+                        await GameManagerUtils.UserJoinGame(creator, shared, false);
+                        return;
+                    }
+                }
             }
 
             uint gameId = (uint)ServerGlobals.GetNextGameId();

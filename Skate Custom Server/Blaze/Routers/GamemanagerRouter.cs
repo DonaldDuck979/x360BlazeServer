@@ -11,6 +11,14 @@ namespace Blaze
         {
             GameManagerMessage gamemanagerMessage = (GameManagerMessage)TdfUtils.GetCommandFromPacket(receivedPacket);
 
+            // [gm-trace] full command sequence, to diagnose why two players never
+            // land in one session. Shows who sent what, their current game + state,
+            // and how many games exist server-wide.
+            string curGame = user.CurrentGame == null
+                ? "none"
+                : $"g{user.CurrentGame.GameData.GameId}/{(Blaze.Components.Gamemanager.Models.GameState)user.CurrentGame.GameData.GameState}";
+            ServerLogger.Log($"[gm-trace] cmd={gamemanagerMessage} user={user.UserIdentification.Name}(blaze={user.Session.BlazeId}) curGame={curGame} totalGames={ServerGlobals.Games.Count}");
+
             switch (gamemanagerMessage)
             {
                 case GameManagerMessage.createGame:

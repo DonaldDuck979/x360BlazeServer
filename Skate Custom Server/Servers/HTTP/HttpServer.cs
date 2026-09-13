@@ -138,6 +138,10 @@ namespace Servers.HTTP
 
                         string path = req.Url.AbsolutePath.TrimEnd('/');
 
+                        // [diag] log every request so we can see the game's native
+                        // (WinHTTP) login/web calls, which are invisible on the client.
+                        ServerLogger.Log($"HTTP {req.HttpMethod} {req.Url.AbsolutePath} (len={req.ContentLength64})");
+
                         // Default to stats.html
                         if (string.IsNullOrWhiteSpace(path))
                         {
@@ -173,6 +177,16 @@ namespace Servers.HTTP
                                 res.ContentLength64 = response.Length;
                                 await res.OutputStream.WriteAsync(response, 0, response.Length, ct);
                                 break;
+                            case "/SDK/webLanguage":
+                                // The game queries this during "Connecting to EA
+                                // Nation" and stalls if it 404s. Answer with the
+                                // web language so the connect flow proceeds.
+                                byte[] lang = Encoding.Latin1.GetBytes("en");
+                                res.ContentType = "text/plain";
+                                res.ContentLength64 = lang.Length;
+                                await res.OutputStream.WriteAsync(lang, 0, lang.Length, ct);
+                                try { res.Close(); } catch { }
+                                return;
                         }
 
                         // The custom endpoints above fully own their response.
